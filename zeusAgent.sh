@@ -18,84 +18,124 @@ command_exists(){
 }
 
 download_configs(){
+  echo "download_configs call start"
   cd /tmp
   curl -O $TD_AGENT_URL
   curl -O $RSYSLOG_URL
   curl -O $COLLECTD_URL
+  echo "download_configs call end"
+
 }
 
 install_packages() {
-  if command_exists lsb_release; then
-  	os_dist="$(lsb_release --codename | cut -f2)"
+  echo "install_packages call start"
+  
+ if command_exists lsb_release; then
+      os_dist="$(lsb_release --id | cut -f2)"
+      if [  "$os_dist" == "Ubuntu" ]; then
+  	    os_dist="$(lsb_release --codename | cut -f2)"
+  	  else
+  	    os_dist="$(lsb_release --id | cut -f2)"
+  	  fi
   else 
-       yum provides */lsb_release
-       yum install -y redhat-lsb-core
+       sudo yum provides */lsb_release
+       sudo yum install -y redhat-lsb-core
        os_dist="$(lsb_release --id | cut -f2)"
   fi  
+  
+  echo "OS Distribution $os_dist"
   case "$os_dist" in 
-        xenial)
-	curl -L http://toolbelt.treasuredata.com/sh/install-ubuntu-xenial-td-agent2.sh | sh
+       xenial)
+	     curl -L http://toolbelt.treasuredata.com/sh/install-ubuntu-xenial-td-agent2.sh | sh
        ;;
        trusty)
-	curl -L http://toolbelt.treasuredata.com/sh/install-ubuntu-trusty-td-agent2.sh | sh
-        yes | sudo add-apt-repository ppa:rullmann/collectd
+         sudo apt-get update 
+         sudo apt-get install -y software-properties-common python-software-properties  
+	     curl -L http://toolbelt.treasuredata.com/sh/install-ubuntu-trusty-td-agent2.sh | sh
+	     yes | sudo add-apt-repository ppa:rullmann/collectd
        ;;
        precise)
-        curl -L http://toolbelt.treasuredata.com/sh/install-ubuntu-precise-td-agent2.sh | sh
-        yes | sudo add-apt-repository ppa:rullmann/collectd
+         sudo apt-get update 
+         sudo apt-get install -y software-properties-common python-software-properties
+         curl -L http://toolbelt.treasuredata.com/sh/install-ubuntu-precise-td-agent2.sh | sh
+         yes | sudo add-apt-repository ppa:rullmann/collectd
        ;;
        jessie)
-        apt-get install -y curl
-        curl -L https://toolbelt.treasuredata.com/sh/install-debian-jessie-td-agent2.sh | sh
+         sudo apt-get install -y curl
+         curl -L https://toolbelt.treasuredata.com/sh/install-debian-jessie-td-agent2.sh | sh
        ;;
        wheezy)
-        apt-get install -y curl
-        curl -L http://toolbelt.treasuredata.com/sh/install-debian-wheezy-td-agent2.sh | sh
+         sudo apt-get install -y curl
+         curl -L http://toolbelt.treasuredata.com/sh/install-debian-wheezy-td-agent2.sh | sh
        ;;
        CentOS)
-        curl -L http://toolbelt.treasuredata.com/sh/install-redhat-td-agent2.sh | sh
-        ;;
+         curl -L http://toolbelt.treasuredata.com/sh/install-redhat-td-agent2.sh | sh
+       ;;
        *)
         echo "OS Distribution Not supported"
         exit 1
-esac
-  # td-agent and collectd dependencies
+        ;;
+  esac
+  ## td-agent and collectd dependencies
+  sudo td-agent-gem install fluent-plugin-record-reformer
+  sudo td-agent-gem install fluent-plugin-secure-forward
+
   if [[ "$os_dist" != "CentOS" ]]; then 
-    apt-get install -y gem ruby-dev
-    apt-get install -y collectd
-    apt-get update
+    sudo apt-get install -y gem ruby-dev
+    sudo apt-get install -y collectd
+    sudo apt-get update
   else
-    yum install -y ruby-devel rubygems
-    yum install -y collectd collectd-rrdtool
+    sudo yum install -y ruby-devel rubygems
+    curl -O https://ciscozeus.io/epel-release-6-8.noarch.rpm
+	curl -O https://ciscozeus.io/python26-libs-2.6.9-3.el5.pp.x86_64.rpm
+	curl -O https://ciscozeus.io/lib64yajl1-1.0.11-3.1-mdv2011.0.x86_64.rpm
+	sudo rpm -ivh epel-release-6-8.noarch.rpm
+	# Below Giving error in CendOS 7 but needed in Cent OS 6
+	if sudo yum install -y libpython2.6.so.1.0; then
+	 echo " libpython2.6.so.1.0 installed on centos 6."
+	else
+	 sudo rpm -ivh python26-libs-2.6.9-3.el5.pp.x86_64.rpm 
+	 echo " python26-libs-2.6.9-3.el5.pp.x86_64.rpm installed in centos 7 "
+	fi   
+	sudo yum install -y rrdtool rrdtool-devel rrdtool-prel libgcrypt-devel gcc make gcc-c++
+	sudo rpm -ivh lib64yajl1-1.0.11-3.1-mdv2011.0.x86_64.rpm
+    sudo yum install -y collectd collectd-rrdtool
   fi
-  # td-agent plugins
-  td-agent-gem install fluent-plugin-record-reformer
-  td-agent-gem install fluent-plugin-secure-forward
+  
+  download_configs
+  configure_agent
+  start_agent
+  echo "install_packages call end"
+  echo "****** Congratulations ! Zeus agent has been installed successfully *******"
+
 }
 
 configure_agent(){
+  echo "configure_agent call start"
   cd /tmp
   sed -i -- "s/<YOUR USERNAME HERE>/$ZEUS_USERNAME/g" td-agent.conf
   sed -i -- "s/<YOUR TOKEN HERE>/$ZEUS_TOKEN/g" td-agent.conf
   sed -i -- "s/data03.ciscozeus.io/$INGESTION_DOMAIN/g" td-agent.conf
-  cp td-agent.conf /etc/td-agent/td-agent.conf
-  cp 10-rsyslog.conf /etc/rsyslog.d/10-rsyslog.conf
+  sudo cp td-agent.conf /etc/td-agent/td-agent.conf
+  sudo cp 10-rsyslog.conf /etc/rsyslog.d/10-rsyslog.conf
 
   os_dist="$(lsb_release --id | cut -f2)"
   if [[ "$os_dist" == "CentOS" ]]; then
-    cp collectd.conf /etc/collectd.conf
+    sudo cp collectd.conf /etc/collectd.conf
   else 
-    cp collectd.conf /etc/collectd/collectd.conf
+    sudo cp collectd.conf /etc/collectd/collectd.conf
   fi
+  echo "configure_agent call end"
 }
 
 start_agent(){
-  service rsyslog restart 
-  service td-agent restart
-  service collectd restart
+  echo "start_agent call start"
+  sudo service rsyslog restart 
+  sudo service td-agent restart
+  sudo service collectd restart
+  echo "start_agent call end"
+
 }
 
 install_packages
-download_configs
-configure_agent
-start_agent
+
